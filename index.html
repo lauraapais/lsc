@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en" class="lab">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>LSC</title>
+  <link rel="stylesheet" href="assets/css/style-2.css">
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+</head>
+
+<body>
+  <main class="grid">
+    <div class="interaction-container span-12">
+      <div class="control-container">
+        <div class="control-flex">
+          <p id="programLabel">Program 01</p>
+          <label class="switch">
+            <input type="checkbox" id="programToggle" autocomplete="off">
+            <span class="switch-track">
+              <span class="switch-thumb"></span>
+            </span>
+          </label>
+        </div>
+
+        <div class="control-flex has-slider">
+          <p>Pixel density</p>
+          <p class="slider-value" id="pixelDensityValue">0.5</p>
+          <div class="slider-track">
+            <div class="slider-fill" id="pixelDensityFill"></div>
+          </div>
+          <input type="range" class="slim-slider" id="pixelDensity" min="0" max="1" step="0.01" value="0.5">
+        </div>
+
+        <div class="control-flex has-slider">
+          <p>Brightness</p>
+          <p class="slider-value" id="brightnessValue">0.5</p>
+          <div class="slider-track">
+            <div class="slider-fill" id="brightnessFill"></div>
+          </div>
+          <input type="range" class="slim-slider" id="brightness" min="0" max="1" step="0.01" value="0.5">
+        </div>
+
+        <div class="control-flex">
+          <p>Main Color</p>
+          <div>
+            <input type="color" id="mainColor" value="#D82B7D">
+          </div>
+        </div>
+
+        <div class="control-flex button-container" id="btnRandomizeShapes">
+          <p>Randomize Shapes</p>
+          <div class="button"></div>
+        </div>
+
+        <div class="control-flex button-container" id="btnRandomizeColors">
+          <p>Randomize Colors</p>
+          <div class="button"></div>
+        </div>
+
+        <div class="control-flex button-container" id="btnSave">
+          <p>Save</p>
+          <div class="button"></div>
+        </div>
+
+      </div>
+    </div>
+
+  </main>
+
+
+
+  <script src="assets/js/shared.js"></script>
+  <script src="assets/js/controls-2.js"></script>
+  <script src="assets/js/tracker.js"></script>
+  <script src="assets/js/illusion.js"></script>
+
+</body>
+
+</html>
