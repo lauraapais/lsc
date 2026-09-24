@@ -3,7 +3,7 @@
 
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>LSC</title>
   <link rel="stylesheet" href="assets/css/style-2.css">
 
@@ -14,7 +14,12 @@
   <main class="grid">
     <div class="interaction-container span-12">
       <div class="control-container">
-        <div class="control-flex">
+        <button type="button" class="panel-toggle" id="panelToggle" aria-expanded="true">
+          <span class="panel-toggle-label">Hide controls</span>
+          <span class="panel-toggle-icon" aria-hidden="true"></span>
+        </button>
+
+        <div class="control-flex program-row">
           <p id="programLabel">Program 01</p>
           <label class="switch">
             <input type="checkbox" id="programToggle" autocomplete="off">
@@ -34,7 +39,7 @@
         </div>
 
         <div class="control-flex has-slider">
-          <p>Brightness</p>
+          <p>Intensity</p>
           <p class="slider-value" id="brightnessValue">0.5</p>
           <div class="slider-track">
             <div class="slider-fill" id="brightnessFill"></div>
@@ -45,7 +50,7 @@
         <div class="control-flex">
           <p>Main Color</p>
           <div>
-            <input type="color" id="mainColor" value="#D82B7D">
+            <input type="color" id="mainColor" value="#0000ff">
           </div>
         </div>
 
@@ -72,7 +77,7 @@
 
 
   <script src="assets/js/shared.js"></script>
-  <script src="assets/js/controls-2.js"></script>
+  <script src="assets/js/controls.js"></script>
   <script src="assets/js/tracker.js"></script>
   <script src="assets/js/illusion.js"></script>
 

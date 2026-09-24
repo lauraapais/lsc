@@ -1,18 +1,3 @@
-/* =========================================================================
-   SHARED — state used by both programs.
-     • LSC.settings  : live values of the UI controls (read every frame).
-     • LSC.color(i)  : the palette, where slot 0 (the pink) is replaced by the
-                       Main Color picker and every other slot stays fixed.
-     • LSC.camera    : ONE camera stream for the whole app, so switching
-                       programs never re-asks for the camera or opens a second
-                       stream.
-     • LSC.status()  : small message line over the canvas (camera errors etc).
-
-   Settings live under window.LSC on purpose: p5 (global mode) owns the names
-   window.pixelDensity and window.brightness, so storing slider values there
-   clobbered p5 functions (and p5 clobbered the slider values back).
-   ========================================================================= */
-
 window.LSC = window.LSC || {};
 
 (function (LSC) {
@@ -21,18 +6,16 @@ window.LSC = window.LSC || {};
   LSC.mode = LSC.MODE_TRACKER;
 
   LSC.settings = {
-    density: 0.5,        // Pixel density slider, 0..1
-    brightness: 0.5,     // Brightness slider, 0..1 (camera / detection, never colour)
-    mainColor: '#D82B7D' // Main Color picker — replaces the pink only
+    density: 0.5,
+    brightness: 0.5,
+    mainColor: '#0000ff'
   };
 
-  // Base palette. Index 0 is the pink that the Main Color picker replaces.
-  LSC.BASE_PALETTE = ['#D82B7D', '#D0D0CE', '#8C664F', '#24191F', '#150F12'];
+  LSC.BASE_PALETTE = ['#0000ff', '#D0D0CE', '#383838', '#ebebeb', '#150F12'];
   LSC.MAIN_INDEX = 0;
 
   const HEX = /^#[0-9a-fA-F]{6}$/;
 
-  // Colour for a palette slot, with the Main Color substituted for the pink.
   LSC.color = function (index) {
     if (index === LSC.MAIN_INDEX) {
       const c = LSC.settings.mainColor;
@@ -50,7 +33,6 @@ window.LSC = window.LSC || {};
     ];
   };
 
-  // WCAG relative luminance, 0..1
   LSC.luminance = function (hex) {
     const lin = (c) => {
       c /= 255;
@@ -73,7 +55,6 @@ window.LSC = window.LSC || {};
     return arr;
   };
 
-  /* ---- Status line ------------------------------------------------------ */
   let statusEl = null;
   const statusMsgs = {};
   LSC.status = function (key, text) {
@@ -90,7 +71,6 @@ window.LSC = window.LSC || {};
     statusEl.style.display = lines.length ? 'block' : 'none';
   };
 
-  /* ---- Camera (single shared stream) ------------------------------------ */
   const camera = {
     video: null,
     ready: false,
@@ -107,8 +87,6 @@ window.LSC = window.LSC || {};
       v.setAttribute('playsinline', '');
       v.setAttribute('muted', '');
       v.setAttribute('aria-hidden', 'true');
-      // Kept in the DOM and technically "visible" (1px, transparent): some
-      // browsers stop decoding frames for display:none videos.
       v.style.cssText =
         'position:fixed;left:0;top:0;width:1px;height:1px;opacity:0;pointer-events:none;z-index:-1;';
       v.style.setProperty('display', 'block', 'important');
@@ -149,11 +127,10 @@ window.LSC = window.LSC || {};
           throw err;
         });
 
-      this._promise.catch(() => {}); // avoid unhandled-rejection noise
+      this._promise.catch(() => {});
       return this._promise;
     },
 
-    // True when a decoded frame is available to read.
     hasFrame() {
       const v = this.video;
       return !!(this.ready && v && v.readyState >= 2 && v.videoWidth > 0 && v.videoHeight > 0);
@@ -162,9 +139,38 @@ window.LSC = window.LSC || {};
 
   LSC.camera = camera;
 
-  // Map a point in camera space (0..1, un-mirrored) to container pixels, using
-  // the same centred "cover" crop and mirror that the tracker uses, so both
-  // programs line up with the person in front of the camera.
+  LSC.SAVE_SCALE = 3;
+
+  LSC.saveScale = function (w, h, want, maxDim) {
+    const limit = Math.min(maxDim || 16384, 16384);
+    let s = want || LSC.SAVE_SCALE;
+    s = Math.min(s, limit / w, limit / h, Math.sqrt(120e6 / (w * h)));
+    return Math.max(1, s);
+  };
+
+  LSC.downloadCanvas = function (canvas, name) {
+    const fallback = () => {
+      const a = document.createElement('a');
+      a.download = name;
+      a.href = canvas.toDataURL('image/png');
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    };
+    if (!canvas.toBlob) return fallback();
+    canvas.toBlob((blob) => {
+      if (!blob) return fallback();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.download = name;
+      a.href = url;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+    }, 'image/png');
+  };
+
   LSC.coverMap = function (vw, vh, W, H) {
     const scale = Math.max(W / vw, H / vh);
     const dw = vw * scale, dh = vh * scale;

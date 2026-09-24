@@ -1,33 +1,3 @@
-/* =========================================================================
-   PROGRAM 02 — ILLUSION
-   Dot-matrix text fused by a "goo" filter: at rest the dots melt together
-   into soft, readable letters that gently breathe. Where the hand passes,
-   the dots swell and are pulled toward the fingers, so the letters inflate
-   into liquid blobs and become unreadable. When the hand leaves they
-   shrink back into the text.
-
-     • Brightness    -> strength of the fingers: reach, how much the dots
-                        swell and how far they are pulled.
-                        (Tied to the camera/hand detection, never to colour.)
-     • Pixel density -> not used here: the dot spacing is fixed (DENSITY below);
-                        the slider is hidden while this program is on.
-     • Main Color    -> replaces the pink only; the other palette colours
-                        keep their roles.
-     • Randomize Colors -> picks new background / text / finger colours
-                        from the palette (legibility-checked).
-     • Keyboard      -> type to add text, Backspace to delete, Enter for a new
-                        line; the usual shortcuts work (Option+Backspace deletes
-                        a word, Cmd+A selects all, paste, accents). The dots
-                        re-flow smoothly as the text changes.
-     • Tuning: the constants below (goo, swell, pull, breathing).
-
-   Rendering: WebGL2 — the dots are drawn crisp, blurred, then thresholded
-   (the same maths as the SVG goo filter: Gaussian blur, alpha × 24 − 10),
-   computed at a reduced resolution when the blur is large, so it stays fast. Falls back to the SVG goo filter on a 2D
-   canvas if WebGL2 is unavailable. Hand tracking: MediaPipe HandLandmarker
-   (loaded once). Only hands interact with the text (no mouse).
-   ========================================================================= */
-
 (function (LSC) {
   const DEFAULT_TEXT =
     'Illusion shows a world that is real and not real at once, a double that has no weight, ' +
@@ -38,30 +8,22 @@
 
   const FONT_FAMILY = 'ExposureTrial';
   const FONT_STACK = `"${FONT_FAMILY}", Poppins, "Arial Black", sans-serif`;
-  const FONT_WEIGHT = 800;     // 800 = bolder (as the reference); 400 = the font's own weight
+  const FONT_WEIGHT = 800;
 
-  // ---- Tuning (defaults = the reference effect) ---------------------------
-  // The goo blur and the dot size follow the dot spacing, so letters look the
-  // same at any size (and never break into gaps when the text is large).
-  const GOO_SOFTNESS = 0.9;    // blur radius ÷ dot spacing (how much dots melt together)
-  const DOT_SIZE = 0.6;        // dot radius ÷ dot spacing (0.5 = solid, no holes)
-  // At rest the goo is kept inside each letter's outline (plus this soft
-  // margin), so letters stay solid and separate with open counters. Dots the
-  // hands push around — and dots re-flowing while typing — are free to blob.
-  const LETTER_MARGIN = 0.35;  // outline margin ÷ dot spacing (bigger = rounder, blobbier;
-                               // negative turns the outline off = the pure goo look)
-  const GOO_CONTRAST = 24;     // alpha multiplier of the goo threshold
-  const GOO_OFFSET = 10;       // alpha offset of the goo threshold
-  const REACH_FRAC = 0.165;    // finger reach as a fraction of min(width, height)
-  const REACH_MIN = 95;        // px
-  const SWELL = 1.2;           // how much dots grow under the fingers
-  const PULL_MAX = 14;         // px — how far dots are pulled toward the fingers
-  const INF_MAX = 1.8;         // cap on accumulated finger influence
-  const BREATH = 0.2;         // resting breathing of every dot (±5% size)
-  const FINGER_DOT = 12;       // px — radius of the finger keypoints
-  const MAX_CHARS = 600;       // typing limit (keeps the text legible)
-  const DENSITY = 0.5;         // fixed dot density, 0 (sparse) .. 1 (dense) — same scale as the old slider
-  // -------------------------------------------------------------------------
+  const GOO_SOFTNESS = 0.9;
+  const DOT_SIZE = 0.5;
+  const LETTER_MARGIN = 0.35;
+  const GOO_CONTRAST = 24;
+  const GOO_OFFSET = 8;
+  const REACH_FRAC = 0.165;
+  const REACH_MIN = 60;
+  const SWELL = 1.2;
+  const PULL_MAX = 14;
+  const INF_MAX = 1.8;
+  const BREATH = 0.2;
+  const FINGER_DOT = 12;
+  const MAX_CHARS = 600;
+  const DENSITY = 0.4;
 
   const MP_VERSION = '0.10.14';
   const MP_BUNDLE = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VERSION}/vision_bundle.mjs`;
@@ -72,7 +34,6 @@
   const lerp = (a, b, t) => a + (b - a) * t;
   const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
 
-  /* ---- Hand model: loaded once, shared across starts ------------------- */
   let handModelPromise = null;
   function loadHandModel() {
     if (handModelPromise) return handModelPromise;
@@ -94,17 +55,14 @@
         return await vision.HandLandmarker.createFromOptions(fileset, options('CPU'));
       }
     })();
-    // A failed load (e.g. offline) may be retried the next time we start.
     handModelPromise.catch(() => { handModelPromise = null; });
     return handModelPromise;
   }
 
-  /* ---- Shaders ---------------------------------------------------------- */
-  // Crisp anti-aliased dots.
   const VS_DOTS = `#version 300 es
-    layout(location = 0) in vec4 aP;      // x, y, radius (css px), free 0..1
+    layout(location = 0) in vec4 aP;
     uniform vec2 uRes;
-    uniform float uScale;                 // texture px per css px
+    uniform float uScale;
     out float vR;
     out float vSize;
     out float vFree;
@@ -127,7 +85,7 @@
       float d = length(gl_PointCoord - 0.5) * vSize;
       float a = clamp(vR - d + 0.5, 0.0, 1.0);
       if (a <= 0.0) discard;
-      o = vec4(a * vFree, 0.0, 0.0, a);   // A: coverage, R: coverage of "free" dots
+      o = vec4(a * vFree, 0.0, 0.0, a);
     }`;
 
   const VS_QUAD = `#version 300 es
@@ -138,12 +96,11 @@
       gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
     }`;
 
-  // Separable Gaussian blur of the dot coverage.
   const FS_BLUR = `#version 300 es
     precision highp float;
     uniform sampler2D uTex;
-    uniform vec2 uStep;                   // one texel in the blur direction
-    uniform float uSigma;                 // in texels
+    uniform vec2 uStep;
+    uniform float uSigma;
     in vec2 vUv;
     out vec4 o;
     void main() {
@@ -161,11 +118,10 @@
       o = vec4(sum.x, 0.0, 0.0, sum.y);
     }`;
 
-  // Goo threshold (same as feColorMatrix alpha row "0 0 0 24 -10") + colour.
   const FS_COMPOSE = `#version 300 es
     precision highp float;
     uniform sampler2D uTex;
-    uniform sampler2D uMask;              // letter outlines (+ margin)
+    uniform sampler2D uMask;
     uniform bool uUseMask;
     uniform vec3 uBg;
     uniform vec3 uInk;
@@ -178,13 +134,12 @@
       float a = clamp(g.a * uContrast - uOffset, 0.0, 1.0);
       if (uUseMask) {
         float letter = texture(uMask, vec2(vUv.x, 1.0 - vUv.y)).a;
-        float free = smoothstep(0.01, 0.08, g.r);   // pushed / moving dots escape
+        float free = smoothstep(0.01, 0.08, g.r);
         a *= max(letter, free);
       }
       o = vec4(mix(uBg, uInk, a), 1.0);
     }`;
 
-  /* ======================================================================= */
   class IllusionApp {
     constructor(container) {
       this.container = container;
@@ -194,7 +149,6 @@
       this.reduceMotion = window.matchMedia &&
         window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-      // Palette roles as indices into LSC.BASE_PALETTE (0 = the Main Color).
       this.roles = { bg: 4, dot: 0, finger: 1 };
 
       this.W = 0; this.H = 0; this.DPR = 1;
@@ -205,6 +159,7 @@
       this.text = DEFAULT_TEXT;
       this.textDirty = false;
       this.caret = null;
+      this.charMap = [];
       this.landmarker = null;
       this.lastVideoTime = -1;
       this.lastDetectTs = 0;
@@ -212,7 +167,6 @@
       this.initDOM();
       this.gl = this.initGL();
       if (!this.gl) {
-        // A canvas that already holds a (failed) WebGL context can't give 2D.
         const fresh = this.canvas.cloneNode(false);
         this.canvas.replaceWith(fresh);
         this.canvas = fresh;
@@ -231,14 +185,12 @@
       this.loop = (t) => this.frame(t);
     }
 
-    /* ---- DOM ------------------------------------------------------------ */
     initDOM() {
       const root = document.createElement('div');
       root.className = 'illusion-root';
       root.style.cssText =
         'position:absolute;inset:0;width:100%;height:100%;overflow:hidden;z-index:2;display:none;';
 
-      // SVG goo filter, used only by the no-WebGL fallback.
       root.innerHTML = `
         <svg style="position:absolute;width:0;height:0;" aria-hidden="true">
           <defs>
@@ -262,8 +214,6 @@
       this.root = root;
       this.octx = this.overlay.getContext('2d');
 
-      // Typing: a hidden textarea receives the keyboard, so the browser's own
-      // text editing handles accents/dead keys, paste, Cmd+A, mobile keyboards.
       const ta = document.createElement('textarea');
       ta.className = 'lsc-typer';
       ta.setAttribute('aria-label', 'Illusion text');
@@ -278,15 +228,21 @@
       ta.value = this.text;
       document.body.appendChild(ta);
       this.typer = ta;
+
       ta.addEventListener('input', () => this.setText(ta.value));
       ta.addEventListener('keydown', (e) => {
-        // The cursor always stays at the end of the text.
-        if (/^(Arrow|Home$|End$|Page)/.test(e.key)) e.preventDefault();
+        if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'a') return;
+        if (e.shiftKey && /^Arrow/.test(e.key)) return;
+        if (/^(Arrow|Home|End|Page)/.test(e.key)) return;
       });
-      // Keys pressed while something else has focus (switch, slider…) are
-      // sent to the textarea, so Space never toggles the program by accident.
+
+      document.addEventListener('selectionchange', () => {
+        if (document.activeElement === this.typer) {
+          this.caretT = performance.now();
+        }
+      });
+
       window.addEventListener('keydown', (e) => this.routeKey(e), true);
-      // Touch screens: tap the text to open the keyboard.
       root.addEventListener('click', () => this.focusTyper());
 
       this.canvas.addEventListener('webglcontextlost', (e) => {
@@ -313,12 +269,11 @@
       const DPR = Math.min(window.devicePixelRatio || 1, 2);
       if (W === this.W && H === this.H && DPR === this.DPR) return;
       this.dirty = true;
-      if (!this.running) return;                 // rebuilt on next start()
+      if (!this.running) return;
       clearTimeout(this.resizeTimer);
       this.resizeTimer = setTimeout(() => this.rebuild(), 100);
     }
 
-    /* ---- WebGL setup ---------------------------------------------------- */
     initGL() {
       const gl = this.canvas.getContext('webgl2', {
         alpha: false, antialias: false, depth: false, stencil: false,
@@ -357,7 +312,6 @@
         return null;
       }
 
-      // Half-float targets keep the goo edge smooth (it amplifies alpha ×24).
       this.floatTargets = !!gl.getExtension('EXT_color_buffer_float');
 
       const target = () => {
@@ -405,11 +359,28 @@
       gl.bindTexture(gl.TEXTURE_2D, null);
     }
 
-    /* ---- Layout: text -> dots ------------------------------------------ */
+    drawMask(scale) {
+      const mask = document.createElement('canvas');
+      mask.width = Math.round(this.W * scale);
+      mask.height = Math.round(this.H * scale);
+      const m = mask.getContext('2d');
+      m.setTransform(mask.width / this.W, 0, 0, mask.height / this.H, 0, 0);
+      m.textBaseline = 'top';
+      m.font = `${FONT_WEIGHT} ${this.fs}px ${FONT_STACK}`;
+      m.fillStyle = m.strokeStyle = '#fff';
+      m.lineJoin = 'round';
+      m.lineWidth = this.maskLine;
+      for (const p of this.placed || []) {
+        m.fillText(p.ln, p.x, p.y);
+        if (m.lineWidth > 0) m.strokeText(p.ln, p.x, p.y);
+      }
+      return mask;
+    }
+
     async rebuild() {
       const token = ++this.buildToken;
       await this.fontReady;
-      if (token !== this.buildToken) return; // a newer rebuild superseded this one
+      if (token !== this.buildToken) return;
       this.build();
     }
 
@@ -429,7 +400,6 @@
         this.overlay.height = Math.round(H * DPR);
       }
 
-      // --- Fit the text to the container (Enter = new paragraph).
       const off = document.createElement('canvas');
       off.width = W; off.height = H;
       const o = off.getContext('2d', { willReadFrequently: true });
@@ -475,39 +445,44 @@
       let y = Math.max(margin, (H - lines.length * lineH) / 2);
       let last = { x: W / 2, y, w: 0 };
       const placed = [];
+
+      this.charMap = [];
+      let charIndexOffset = 0;
+
       for (const ln of lines) {
         const w = o.measureText(ln).width;
         const x = (W - w) / 2;
         o.fillText(ln, x, y);
+
+        let currentX = x;
+        for (let i = 0; i < ln.length; i++) {
+          const ch = ln[i];
+          const cw = o.measureText(ch).width;
+          this.charMap.push({
+            x: currentX,
+            y: y,
+            w: cw,
+            h: lineH,
+            index: charIndexOffset + i
+          });
+          currentX += cw;
+        }
+
         placed.push({ ln, x, y });
         last = { x, y, w };
+        charIndexOffset += ln.length + 1;
         y += lineH;
       }
-      // Blinking cursor sits right after the last character.
       this.caret = { x: last.x + last.w + fs * 0.06, y: last.y + fs * 0.05, h: fs * 0.9, w: Math.max(2, fs * 0.07) };
 
-      // --- Sample the text into dots at the fixed density (0.5 = the
-      // reference spacing). Program 01's Pixel density slider doesn't apply here.
       const densityScale = 0.5 + DENSITY;
-      const S = Math.max(2.5, Math.max(4, fs * 0.08) / densityScale);
+      const S = Math.max(2.5, Math.max(2.5, fs * 0.08) / densityScale);
       this.S = S;
-      this.sigma = S * GOO_SOFTNESS;                  // goo blur (css px)
+      this.sigma = S * GOO_SOFTNESS;
 
-      // Letter outlines with a rounded margin: the resting goo stays inside.
-      const mask = document.createElement('canvas');
-      mask.width = W; mask.height = H;
-      const m = mask.getContext('2d');
-      m.textBaseline = 'top';
-      m.font = `${FONT_WEIGHT} ${fs}px ${FONT_STACK}`;
-      m.fillStyle = m.strokeStyle = '#fff';
-      m.lineJoin = 'round';
-      // (capped by the font size so sparse dot settings don't close the gaps)
-      m.lineWidth = 2 * LETTER_MARGIN * Math.min(S, fs * 0.08);
-      for (const p of placed) {
-        m.fillText(p.ln, p.x, p.y);
-        if (m.lineWidth > 0) m.strokeText(p.ln, p.x, p.y);
-      }
-      // Goo texture resolution: keep the blur ≈ ≤4 texels so it stays cheap.
+      this.placed = placed;
+      this.maskLine = 2 * LETTER_MARGIN * Math.min(S, fs * 0.08);
+      const mask = this.drawMask(1);
       const gooScale = Math.min(1, 4 / this.sigma);
       const img = o.getImageData(0, 0, W, H).data;
       const jitter = S * 0.12;
@@ -523,9 +498,6 @@
         }
       }
 
-      // --- Carry the previous dots over, so edits morph instead of jumping:
-      // each new dot starts from the nearest old dot (and slides home); new
-      // ink grows in from nothing; old dots with no match shrink away.
       const prev = (this.N && this.x) ? {
         n: this.N, x: this.x, y: this.y, r: this.r, inf: this.inf,
         phase: this.phase, alive: this.alive
@@ -569,7 +541,7 @@
 
       const N = nNew + nDying;
       this.N = N;
-      this.nAlive = nNew;          // dots after this index are shrinking away
+      this.nAlive = nNew;
       this.hx = new Float32Array(N);
       this.hy = new Float32Array(N);
       this.baseR = new Float32Array(N);
@@ -587,7 +559,7 @@
           this.inf[i] = prev.inf[j]; this.phase[i] = prev.phase[j];
         } else {
           this.x[i] = hx[i]; this.y[i] = hy[i];
-          this.r[i] = prev ? 0 : br[i];                  // new ink grows in
+          this.r[i] = prev ? 0 : br[i];
           this.phase[i] = Math.random() * Math.PI * 2;
         }
       }
@@ -595,7 +567,6 @@
         let k = nNew;
         for (let j = 0; j < prev.n; j++) {
           if (!prev.alive[j] || used[j] || prev.r[j] <= 0.05) continue;
-          // Dying dot: stays where it is and shrinks to nothing.
           this.hx[k] = this.x[k] = prev.x[j];
           this.hy[k] = this.y[k] = prev.y[j];
           this.r[k] = prev.r[j];
@@ -608,7 +579,6 @@
 
       this.reach = Math.max(REACH_MIN, Math.min(W, H) * REACH_FRAC);
 
-      // No-WebGL fallback: keep the SVG goo blur in step with the spacing.
       const blurEl = this.root.querySelector('.lsc-goo-blur');
       if (blurEl) blurEl.setAttribute('stdDeviation', this.sigma.toFixed(2));
 
@@ -629,18 +599,17 @@
       }
     }
 
-    /* ---- Hand tracking -------------------------------------------------- */
     updateTracking() {
       if (!this.landmarker || !LSC.camera.hasFrame()) {
         this.hands = [];
         return;
       }
       const v = LSC.camera.video;
-      if (v.currentTime === this.lastVideoTime) return; // no new camera frame yet
+      if (v.currentTime === this.lastVideoTime) return;
       this.lastVideoTime = v.currentTime;
 
       let ts = performance.now();
-      if (ts <= this.lastDetectTs) ts = this.lastDetectTs + 1; // must strictly increase
+      if (ts <= this.lastDetectTs) ts = this.lastDetectTs + 1;
       this.lastDetectTs = ts;
 
       let res = null;
@@ -669,7 +638,6 @@
       this.hands = next;
     }
 
-    // Every hand keypoint is a focus (only hands interact — no mouse).
     fingerFoci() {
       const foci = [];
       for (const h of this.hands) {
@@ -678,7 +646,6 @@
       return foci;
     }
 
-    /* ---- Keyboard ------------------------------------------------------- */
     isTextField(el) {
       if (!el) return false;
       if (el.isContentEditable || el.tagName === 'TEXTAREA') return true;
@@ -689,8 +656,6 @@
       const ta = this.typer;
       if (!ta || !this.running) return;
       if (document.activeElement !== ta) ta.focus({ preventScroll: true });
-      const end = ta.value.length;
-      if (ta.selectionStart === ta.selectionEnd) ta.setSelectionRange(end, end);
     }
 
     routeKey(e) {
@@ -699,7 +664,7 @@
       const typing = !mod && (e.key.length === 1 || e.key === 'Backspace' || e.key === 'Enter' ||
         e.key === 'Dead' || e.key === 'Process' || e.key === 'Unidentified');
       const editShortcut = mod && /^(a|v|x|z|Backspace)$/i.test(e.key);
-      if (typing || editShortcut) this.focusTyper(); // the key then lands in the textarea
+      if (typing || editShortcut) this.focusTyper();
     }
 
     setText(t) {
@@ -708,19 +673,17 @@
       if (this.typer && this.typer.value !== t) this.typer.value = t;
       if (t === this.text) return;
       this.text = t;
-      this.textDirty = true;       // rebuilt on the next frame (coalesces key repeat)
+      this.textDirty = true;
       this.caretT = performance.now();
     }
 
-    /* ---- Simulation ----------------------------------------------------- */
     step(dt) {
       const T = (this.time += dt * (this.reduceMotion ? 0.3 : 1));
-      const f60 = dt * 60;                      // frame-rate independent easing
+      const f60 = dt * 60;
       const infEase = 1 - Math.pow(1 - 0.28, f60);
       const rEase = 1 - Math.pow(1 - 0.3, f60);
       const posEase = 1 - Math.pow(1 - 0.22, f60);
 
-      // Brightness slider = strength of the fingers (0.5 = reference effect).
       const k = clamp01(LSC.settings.brightness);
       this.strength = k;
       const R = this.reach * lerp(0.6, 1.4, k);
@@ -748,7 +711,6 @@
         const dx0 = hx[i], dy0 = hy[i];
         const near = nf > 0 && dx0 > minX && dx0 < maxX && dy0 > minY && dy0 < maxY;
 
-        // Finger influence on this dot, and the direction toward the fingers.
         let tInf = 0, ax = 0, ay = 0, aw = 0;
         if (near) {
           for (let j = 0; j < nf; j++) {
@@ -767,12 +729,10 @@
         inf[i] += (tInf - inf[i]) * infEase;
         const di = inf[i];
 
-        // Size: gentle breathing, swelling under the fingers.
         const b = 1 + breathe * Math.sin(tb + phase[i]);
         const targetR = baseR[i] * b * (1 + di * swell);
         r[i] += (targetR - r[i]) * rEase;
 
-        // Position: pulled toward the fingers.
         let tx = dx0, ty = dy0;
         if (di > 0.02 && aw > 0) {
           const pull = Math.min(pullMax, di * 12 * pullScale);
@@ -785,8 +745,6 @@
         pbuf[o] = x[i];
         pbuf[o + 1] = y[i];
         pbuf[o + 2] = r[i];
-        // "Free" dots may leave the letter outline: pushed by the hands,
-        // still sliding to a new place (typing), or shrinking away (deleted).
         let free = 1;
         if (i < nAlive) {
           const off = Math.hypot(x[i] - dx0, y[i] - dy0) * invS;
@@ -796,7 +754,6 @@
         pbuf[o + 3] = free;
       }
 
-      // Drop deleted dots once they have fully shrunk away.
       if (this.N > this.nAlive) {
         let gone = true;
         for (let i = this.nAlive; i < this.N; i++) if (r[i] > 0.05) { gone = false; break; }
@@ -804,7 +761,6 @@
       }
     }
 
-    /* ---- Colours -------------------------------------------------------- */
     colors() {
       return {
         bg: LSC.color(this.roles.bg),
@@ -820,17 +776,15 @@
         const p = LSC.shuffle([0, 1, 2, 3, 4]);
         const r = { bg: p[0], dot: p[1], finger: p[2] };
         if (r.bg === cur.bg && r.dot === cur.dot && r.finger === cur.finger) continue;
-        // The Main Color (pink slot) must be in use, so the picker always shows.
         if (r.bg !== main && r.dot !== main && r.finger !== main) continue;
         const bg = LSC.color(r.bg), dot = LSC.color(r.dot), fi = LSC.color(r.finger);
-        if (LSC.contrast(bg, dot) < 2.5) continue;   // text must read
-        if (LSC.contrast(bg, fi) < 1.4) continue;    // fingers must be visible
+        if (LSC.contrast(bg, dot) < 2.5) continue;
+        if (LSC.contrast(bg, fi) < 1.4) continue;
         this.roles = r;
         return;
       }
     }
 
-    /* ---- Rendering ------------------------------------------------------ */
     render() {
       const c = this.colors();
       if (this.root.style.backgroundColor !== c.bg) this.root.style.backgroundColor = c.bg;
@@ -847,7 +801,6 @@
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, null);
 
-      // Pass 1: crisp dots.
       gl.bindFramebuffer(gl.FRAMEBUFFER, this.rtDots.fbo);
       const gw = this.gooW, gh = this.gooH, gs = gw / W;
       gl.viewport(0, 0, gw, gh);
@@ -866,7 +819,6 @@
         gl.disable(gl.BLEND);
       }
 
-      // Pass 2 + 3: Gaussian blur (horizontal, then vertical).
       const B = this.progBlur;
       gl.useProgram(B.p);
       gl.bindVertexArray(this.vaoQuad);
@@ -883,7 +835,6 @@
       gl.uniform2f(B.u.uStep, 0, 1 / gh);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
 
-      // Pass 4: goo threshold + colour, to the screen.
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
       gl.viewport(0, 0, this.canvas.width, this.canvas.height);
       const P = this.progCompose;
@@ -891,7 +842,7 @@
       gl.bindTexture(gl.TEXTURE_2D, this.rtBlurY.tex);
       gl.uniform1i(P.u.uTex, 0);
       gl.activeTexture(gl.TEXTURE1);
-      gl.bindTexture(gl.TEXTURE_2D, this.texMask);
+      gl.bindTexture(gl.TEXTURE_2D, this.maskOverride || this.texMask);
       gl.uniform1i(P.u.uMask, 1);
       gl.uniform1i(P.u.uUseMask, LETTER_MARGIN >= 0 ? 1 : 0);
       gl.activeTexture(gl.TEXTURE0);
@@ -922,20 +873,67 @@
       ctx.fill(path);
     }
 
-    // Hand keypoints as solid circles (not gooed), sized by strength.
-    renderFingers(c) {
-      const ctx = this.octx;
-      ctx.setTransform(1, 0, 0, 1, 0, 0);
-      ctx.clearRect(0, 0, this.overlay.width, this.overlay.height);
-      ctx.setTransform(this.DPR, 0, 0, this.DPR, 0, 0);
+    renderFingers(c, target, scale, exporting) {
+      const ctx = target || this.octx;
+      if (!target) {
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.clearRect(0, 0, this.overlay.width, this.overlay.height);
+      }
+      const k = scale || this.DPR;
+      ctx.setTransform(k, 0, 0, k, 0, 0);
 
-      // Blinking text cursor (solid for a moment after each key press).
-      const cr = this.caret;
-      if (cr && !this.hideCaret) {
+      const ta = this.typer;
+      const selStart = ta && !exporting ? ta.selectionStart : 0;
+      const selEnd = ta && !exporting ? ta.selectionEnd : 0;
+
+      if (selStart !== selEnd && this.charMap && this.charMap.length) {
+        ctx.fillStyle = c.finger;
+        ctx.globalAlpha = 0.35;
+
+        const start = Math.min(selStart, selEnd);
+        const end = Math.max(selStart, selEnd);
+        const selectedChars = this.charMap.filter(ch => ch.index >= start && ch.index < end);
+
+        const lineGroups = {};
+        for (const char of selectedChars) {
+          const key = Math.round(char.y);
+          if (!lineGroups[key]) lineGroups[key] = [];
+          lineGroups[key].push(char);
+        }
+
+        for (const key in lineGroups) {
+          const chars = lineGroups[key];
+          const startX = chars[0].x;
+          const endX = chars[chars.length - 1].x + chars[chars.length - 1].w;
+          const rectY = chars[0].y;
+          const rectH = chars[0].h;
+
+          ctx.fillRect(startX, rectY, endX - startX, rectH);
+        }
+
+        ctx.globalAlpha = 1.0;
+      }
+
+      const caretIndex = selEnd;
+      let caretPos = this.caret;
+
+      if (this.charMap && this.charMap.length && selStart !== selEnd) {
+        const charAtCaret = this.charMap.find(ch => ch.index === caretIndex - 1);
+        if (charAtCaret) {
+          caretPos = {
+            x: charAtCaret.x + charAtCaret.w,
+            y: charAtCaret.y + this.fs * 0.05,
+            h: this.fs * 0.9,
+            w: Math.max(2, this.fs * 0.07)
+          };
+        }
+      }
+
+      if (caretPos && !this.hideCaret && !exporting) {
         const since = performance.now() - (this.caretT || 0);
         if (since < 600 || Math.floor(since / 530) % 2 === 0) {
           ctx.fillStyle = c.dot;
-          ctx.fillRect(cr.x, cr.y, cr.w, cr.h);
+          ctx.fillRect(caretPos.x, caretPos.y, caretPos.w, caretPos.h);
         }
       }
 
@@ -951,12 +949,11 @@
       ctx.fill();
     }
 
-    /* ---- Loop / lifecycle ---------------------------------------------- */
     frame(t) {
       if (!this.running) return;
       this.raf = requestAnimationFrame(this.loop);
-      if (this.dirty || !this.pbuf) return; // layout not built yet
-      if (this.textDirty) this.build();     // typing: rebuild once per frame at most
+      if (this.dirty || !this.pbuf) return;
+      if (this.textDirty) this.build();
       const dt = this.lastT ? Math.min(0.05, Math.max(0, (t - this.lastT) / 1000)) : 1 / 60;
       this.lastT = t;
       this.updateTracking();
@@ -993,8 +990,6 @@
       cancelAnimationFrame(this.raf);
       this.raf = requestAnimationFrame(this.loop);
 
-      // Ready to type straight away (not on touch screens: that would pop the
-      // on-screen keyboard every time — tap the text there instead).
       const coarse = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
       if (!coarse) this.focusTyper();
     }
@@ -1016,27 +1011,52 @@
 
     save() {
       if (!this.pbuf) return;
-      this.hideCaret = true;
-      this.render(); // draw now so the WebGL buffer is valid to copy
-      this.hideCaret = false;
+      const c = this.colors();
+      const gl = this.gl && !this.glLost ? this.gl : null;
+      let maxDim = 16384;
+      if (gl) {
+        const vp = gl.getParameter(gl.MAX_VIEWPORT_DIMS);
+        maxDim = Math.min(gl.getParameter(gl.MAX_RENDERBUFFER_SIZE), vp[0], vp[1]);
+      }
+      const S = LSC.saveScale(this.W, this.H, LSC.SAVE_SCALE, maxDim);
       const out = document.createElement('canvas');
-      out.width = this.canvas.width;
-      out.height = this.canvas.height;
+      out.width = Math.round(this.W * S);
+      out.height = Math.round(this.H * S);
       const ctx = out.getContext('2d');
-      ctx.fillStyle = this.colors().bg;
+      ctx.fillStyle = c.bg;
       ctx.fillRect(0, 0, out.width, out.height);
-      ctx.drawImage(this.canvas, 0, 0);
-      ctx.drawImage(this.overlay, 0, 0);
-      const a = document.createElement('a');
-      a.download = `LSC-illusion-${Date.now()}.png`;
-      a.href = out.toDataURL('image/png');
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
+
+      if (gl) {
+        const tex = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, tex);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, this.drawMask(S));
+        gl.bindTexture(gl.TEXTURE_2D, null);
+
+        const prevW = this.canvas.width, prevH = this.canvas.height;
+        this.canvas.width = out.width;
+        this.canvas.height = out.height;
+        this.maskOverride = tex;
+        this.renderGL(c);
+        ctx.drawImage(this.canvas, 0, 0);
+        this.maskOverride = null;
+        gl.deleteTexture(tex);
+        this.canvas.width = prevW;
+        this.canvas.height = prevH;
+        this.renderGL(c);
+      } else {
+        ctx.drawImage(this.canvas, 0, 0, out.width, out.height);
+      }
+
+      this.renderFingers(c, ctx, S, true);
+      LSC.downloadCanvas(out, `LSC-illusion-${S.toFixed(0)}x-${Date.now()}.png`);
     }
   }
 
-  /* ---- Public API (used by controls-2.js) ------------------------------ */
   let app = null;
   function instance() {
     if (!app) {
@@ -1053,6 +1073,6 @@
     applyDensity() { if (app) app.applyDensity(); },
     randomizeColors() { const a = instance(); if (a) a.randomizeColors(); },
     save() { if (app && app.running) app.save(); },
-    _app: () => app // for debugging from the console
+    _app: () => app
   };
 })(window.LSC);
